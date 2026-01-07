@@ -1,0 +1,89 @@
+
+
+{
+  "resourceGroup": "security-rg",
+  "keyVaultName": "myapp-kv-prod",
+  "location": "eastus2",
+  "skuName": "Standard",
+  "enableSoftDelete": true,
+  "enablePurgeProtection": true,
+  "accessPolicies": [
+    {
+      "displayName": "Application Service Principal",
+      "objectId": "12345678-1234-1234-1234-123456789012",
+      "permissions": {
+        "secrets": ["Get", "List"],
+        "keys": [],
+        "certificates": []
+      }
+    },
+    {
+      "displayName": "DevOps Pipeline",
+      "objectId": "87654321-4321-4321-4321-210987654321",
+      "permissions": {
+        "secrets": ["Get", "List", "Set"],
+        "keys": [],
+        "certificates": []
+      }
+    },
+    {
+      "displayName": "Platform Admin Group",
+      "objectId": "abcdef12-3456-7890-abcd-ef1234567890",
+      "permissions": {
+        "secrets": ["Get", "List", "Set", "Delete", "Recover", "Backup", "Restore", "Purge"],
+        "keys": ["Get", "List", "Create", "Delete", "Update"],
+        "certificates": ["Get", "List", "Create", "Delete", "Update"]
+      }
+    }
+  ],
+  "secrets": [
+    {
+      "name": "DatabaseConnectionString",
+      "value": "Server=sql-server-01.database.windows.net;Database=AppDB;User Id=appuser;Password=SecureP@ssw0rd!;",
+      "contentType": "Connection String",
+      "expiresOn": "2026-12-31T23:59:59Z",
+      "tags": {
+        "Environment": "Production",
+        "Application": "WebApp",
+        "ManagedBy": "Platform-Team"
+      }
+    },
+    {
+      "name": "ApiKey-ExternalService",
+      "value": "sk.test",
+      "contentType": "API Key",
+      "tags": {
+        "Environment": "Production",
+        "Service": "ExternalAPI"
+      }
+    },
+    {
+      "name": "StorageAccountKey",
+      "value": "DefaultEndpointsProtocol=https;AccountName=mystorageacct;AccountKey=ABC123XYZ789==;EndpointSuffix=core.windows.net",
+      "contentType": "Storage Account Key",
+      "expiresOn": "2026-06-30T23:59:59Z",
+      "tags": {
+        "Environment": "Production",
+        "ResourceType": "Storage"
+      }
+    },
+    {
+      "name": "ServiceBusConnectionString",
+      "value": "Endpoint=sb://myservicebus.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=ABC123==",
+      "contentType": "Service Bus Connection",
+      "tags": {
+        "Environment": "Production",
+        "Service": "Messaging"
+      }
+    }
+  ],
+  "networkRules": {
+    "defaultAction": "Deny",
+    "bypass": "AzureServices",
+    "ipRules": [
+      "203.0.113.0/24",
+      "198.51.100.50/32",
+      "192.0.2.100/32"
+    ]
+  }
+}

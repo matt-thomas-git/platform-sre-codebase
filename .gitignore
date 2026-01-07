@@ -1,0 +1,305 @@
+# ============================================
+# Platform SRE Portfolio - .gitignore
+# ============================================
+
+# ----------------
+# Terraform
+# ----------------
+# Local .terraform directories
+**/.terraform/*
+
+# .tfstate files
+*.tfstate
+*.tfstate.*
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Exclude all .tfvars files (may contain sensitive data)
+*.tfvars
+*.tfvars.json
+
+# Override files (local customizations)
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Terraform CLI configuration files
+.terraformrc
+terraform.rc
+
+# Terraform lock file (optional - some teams commit this)
+# .terraform.lock.hcl
+
+# ----------------
+# PowerShell
+# ----------------
+*.ps1xml
+*.psd1
+*.psm1~
+
+# PowerShell history (may contain secrets)
+*ConsoleHost_history.txt
+
+# ----------------
+# Logs and Temporary Files
+# ----------------
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+*.old
+
+# Application logs
+logs/
+*.log.*
+log-*.txt
+
+# SQL Server logs
+*.trc
+*.xel
+
+# IIS logs
+W3SVC*/
+u_ex*.log
+
+# ----------------
+# Output Files
+# ----------------
+# CSV exports (may contain sensitive data)
+*.csv
+
+# Text outputs
+*.txt
+!requirements.txt
+!README.txt
+
+# JSON files (except examples)
+*.json
+!**/config/*.example.json
+!**/config/*-example.json
+!package.json
+!tsconfig.json
+
+# XML outputs
+*.xml
+!**/config/*.example.xml
+
+# ----------------
+# Backup Directories
+# ----------------
+*Backup*/
+*backup*/
+*BACKUP*/
+*_backup/
+backup-*/
+
+# ----------------
+# OS Files
+# ----------------
+# Windows
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+.directory
+
+# ----------------
+# IDE and Editors
+# ----------------
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.iws
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# ----------------
+# Credentials and Secrets
+# ----------------
+# Certificate files
+*.pfx
+*.cer
+*.crt
+*.pem
+*.key
+*.p12
+
+# Secret files
+*secret*
+*Secret*
+*SECRET*
+*password*
+*Password*
+*PASSWORD*
+*credential*
+*Credential*
+*CREDENTIAL*
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# Azure credentials
+.azure/
+azureauth.json
+
+# Service Principal files
+sp-*.json
+service-principal-*.json
+
+# ----------------
+# Configuration Files (Real)
+# ----------------
+# Only commit .example files, not real configs
+config/*.json
+!config/*.example.json
+!config/*-example.json
+
+config/*.xml
+!config/*.example.xml
+
+config/*.yaml
+config/*.yml
+!config/*.example.yaml
+!config/*.example.yml
+
+# ----------------
+# Test Outputs
+# ----------------
+TestResults/
+test-results/
+coverage/
+*.trx
+
+# ----------------
+# Build Outputs
+# ----------------
+bin/
+obj/
+out/
+dist/
+build/
+
+# ----------------
+# Package Managers
+# ----------------
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.venv
+
+# ----------------
+# Azure DevOps
+# ----------------
+# Pipeline artifacts
+artifacts/
+drop/
+
+# ----------------
+# Token Caches
+# ----------------
+# Azure token cache
+.azure_token_cache
+TokenCache.dat
+
+# PowerShell token cache
+*.token
+
+# ----------------
+# Database Files
+# ----------------
+*.mdf
+*.ldf
+*.bak
+*.trn
+
+# ----------------
+# Compressed Files
+# ----------------
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# ----------------
+# Temporary Directories
+# ----------------
+temp/
+tmp/
+.temp/
+.tmp/
+
+# ----------------
+# Custom Exclusions
+# ----------------
+# Real server lists (keep examples only)
+servers.txt
+server-list.txt
+production-servers.txt
+
+# Real IP lists
+ip-whitelist.txt
+firewall-rules.txt
+
+# Audit outputs
+*-audit-*.csv
+*-report-*.csv
+audit-*.json
+
+# ----------------
+# Keep These Files
+# ----------------
+# Example/template files should be committed
+!*.example
+!*-example.*
+!*.template
+!*-template.*
+!*.sample
+!*-sample.*
+
+# Documentation
+!README.md
+!CONTRIBUTING.md
+!CHANGELOG.md
+!LICENSE
+!*.md
+
+# ============================================
+# End of .gitignore
+# ============================================

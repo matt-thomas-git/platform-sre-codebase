@@ -1,0 +1,248 @@
+﻿# Server Maintenance Pipeline - Single Step Approach
+name: 'Server Maintenance Pipeline'
+
+trigger: none
+
+parameters:
+- name: serverListFile
+  displayName: 'Server List File'
+  type: string
+  default: 'custom'
+  values:
+  - 'InfraServerList.ps1'
+  - 'custom'
+
+- name: customServers
+  displayName: 'Custom Server List (comma-separated)'
+  type: string
+  default: ''
+
+- name: selectAll
+  displayName: 'SELECT ALL CLEANUP OPTIONS'
+  type: boolean
+  default: false
+
+- name: cleanSQL
+  displayName: 'Clean SQL Server Logs'
+  type: boolean
+  default: false
+
+- name: cleanIIS
+  displayName: 'Clean IIS Web Server Logs'
+  type: boolean
+  default: false
+
+- name: cleanBitvise
+  displayName: 'Clean Bitvise SSH Server Logs'
+  type: boolean
+  default: false
+
+- name: cleanTempFolders
+  displayName: 'Clean Temp Folders'
+  type: boolean
+  default: false
+
+- name: cleanSFTP
+  displayName: 'Clean SFTP Data'
+  type: boolean
+  default: false
+
+- name: cleanSFTPArchive
+  displayName: 'Clean SFTP Archive Data'
+  type: boolean
+  default: false
+
+- name: sqlRetentionDays
+  displayName: 'SQL Log Retention Days (0 = keep current only)'
+  type: number
+  default: 0
+
+- name: iisRetentionDays
+  displayName: 'IIS Log Retention Days'
+  type: number
+  default: 30
+
+- name: bitviseRetentionDays
+  displayName: 'Bitvise Log Retention Days'
+  type: number
+  default: 90
+
+- name: tempFolderRetentionDays
+  displayName: 'Temp Folder Retention Days'
+  type: number
+  default: 0
+
+- name: sftpRetentionDays
+  displayName: 'SFTP Regular Files Retention Days'
+  type: number
+  default: 180
+
+- name: sftpArchiveRetentionDays
+  displayName: 'SFTP Archive Files Retention Days'
+  type: number
+  default: 180
+
+variables:
+- group: MaintenanceVG
+
+pool: 'Windows Updates'
+
+resources:
+  repositories:
+  - repository: infrastructure
+    type: git
+    name: Infrastructure/Cloud-CG
+    ref: refs/heads/main
+
+jobs:
+- job: MaintenanceJob
+  displayName: 'Execute Server Maintenance'
+  pool: 'Windows Updates'
+  steps:
+  
+  - checkout: infrastructure
+    displayName: 'Checkout Infrastructure Repository'
+  
+  - powershell: |
+      Write-Host "=== SERVER MAINTENANCE PIPELINE ===" -ForegroundColor Cyan
+      Write-Host "Pipeline: $(Build.DefinitionName)"
+      Write-Host "Build: $(Build.BuildNumber)"
+      Write-Host "Triggered By: $(Build.RequestedFor)"
+      Write-Host "Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+      Write-Host ""
+      
+      $scriptPath = "$(System.DefaultWorkingDirectory)/Infra-Pipelines/PowerShell/Server-Maintenance-Pipeline.ps1"
+      
+      # Validate script exists
+      if (-not (Test-Path $scriptPath)) {
+        Write-Error "❌ Server maintenance script not found at: $scriptPath"
+        exit 1
+      }
+      
+      # Handle "Select All" logic
+      $selectAll = [System.Convert]::ToBoolean('${{ parameters.selectAll }}')
+      $cleanSQL = [System.Convert]::ToBoolean('${{ parameters.cleanSQL }}') -or $selectAll
+      $cleanIIS = [System.Convert]::ToBoolean('${{ parameters.cleanIIS }}') -or $selectAll
+      $cleanBitvise = [System.Convert]::ToBoolean('${{ parameters.cleanBitvise }}') -or $selectAll
+      $cleanTempFolders = [System.Convert]::ToBoolean('${{ parameters.cleanTempFolders }}') -or $selectAll
+      $cleanSFTP = [System.Convert]::ToBoolean('${{ parameters.cleanSFTP }}') -or $selectAll
+      $cleanSFTPArchive = [System.Convert]::ToBoolean('${{ parameters.cleanSFTPArchive }}') -or $selectAll
+      
+      # Validation
+      if (-not ($cleanSQL -or $cleanIIS -or $cleanBitvise -or $cleanTempFolders -or $cleanSFTP -or $cleanSFTPArchive)) {
+        Write-Error "At least one cleanup option must be selected"
+        exit 1
+      }
+      
+      if ('${{ parameters.serverListFile }}' -eq 'custom' -and '${{ parameters.customServers }}' -eq '') {
+        Write-Error "Custom servers must be specified when using custom server list"
+        exit 1
+      }
+      
+      Write-Host "🎯 CONFIGURATION" -ForegroundColor Yellow
+      Write-Host "Server List: ${{ parameters.serverListFile }}"
+      Write-Host "Custom Servers: ${{ parameters.customServers }}"
+      Write-Host "SQL Cleanup: $cleanSQL (Retention: ${{ parameters.sqlRetentionDays }} days)"
+      Write-Host "IIS Cleanup: $cleanIIS (Retention: ${{ parameters.iisRetentionDays }} days)"
+      Write-Host "Bitvise Cleanup: $cleanBitvise (Retention: ${{ parameters.bitviseRetentionDays }} days)"
+      Write-Host "Temp Cleanup: $cleanTempFolders (Retention: ${{ parameters.tempFolderRetentionDays }} days)"
+      Write-Host "SFTP Cleanup: $cleanSFTP (Retention: ${{ parameters.sftpRetentionDays }} days)"
+      Write-Host "SFTP Archive Cleanup: $cleanSFTPArchive (Retention: ${{ parameters.sftpArchiveRetentionDays }} days)"
+      Write-Host ""
+      
+      # Build parameters - ALL selected cleanup operations in ONE call
+      $params = @{
+          AutoConfirm = $true
+      }
+      
+      # Add cleanup flags
+      if ($cleanSQL) { 
+        $params['CleanSQL'] = $true
+        $params['SQLLogRetentionDays'] = ${{ parameters.sqlRetentionDays }}
+      }
+      if ($cleanIIS) { 
+        $params['CleanIIS'] = $true
+        $params['IISLogRetentionDays'] = ${{ parameters.iisRetentionDays }}
+      }
+      if ($cleanBitvise) { 
+        $params['CleanBitvise'] = $true
+        $params['BitviseLogRetentionDays'] = ${{ parameters.bitviseRetentionDays }}
+      }
+      if ($cleanTempFolders) { 
+        $params['CleanTempFolders'] = $true
+        $params['TempFolderRetentionDays'] = ${{ parameters.tempFolderRetentionDays }}
+      }
+      if ($cleanSFTP) { 
+        $params['CleanSFTP'] = $true
+        $params['SFTPRetentionDays'] = ${{ parameters.sftpRetentionDays }}
+      }
+      if ($cleanSFTPArchive) { 
+        $params['CleanSFTPArchive'] = $true
+        $params['SFTPArchiveRetentionDays'] = ${{ parameters.sftpArchiveRetentionDays }}
+      }
+      
+      # Server selection
+      if ('${{ parameters.serverListFile }}' -ne 'custom') {
+        $params['ServerListFile'] = "$(System.DefaultWorkingDirectory)/WindowsUpdates/Servers/${{ parameters.serverListFile }}"
+      } else {
+        $params['TargetServers'] = "${{ parameters.customServers }}"
+      }
+      
+      Write-Host "🚀 STARTING MAINTENANCE OPERATIONS..." -ForegroundColor Green
+      Write-Host ""
+      
+      # Simple approach - just run the script directly with timeout
+      try {
+        # Use Invoke-Command with timeout for better control
+        $scriptBlock = {
+          param($scriptPath, $params)
+          & $scriptPath @params
+        }
+        
+        # Execute with timeout
+        $job = Start-Job -ScriptBlock $scriptBlock -ArgumentList $scriptPath, $params
+        $completed = $job | Wait-Job -Timeout 30
+        
+        if ($completed) {
+          # Job completed successfully
+          $output = Receive-Job $job
+          Write-Host $output
+          $exitCode = $job.State
+          Remove-Job $job
+          
+          # Check if the output contains the final summary to confirm completion
+          if ($output -like "*FINAL SUMMARY*" -or $output -like "*Operation completed*") {
+            Write-Host ""
+            Write-Host "✅ MAINTENANCE PIPELINE COMPLETED SUCCESSFULLY" -ForegroundColor Green
+          } else {
+            Write-Host ""
+            Write-Host "⚠️ MAINTENANCE COMPLETED BUT MAY BE INCOMPLETE" -ForegroundColor Yellow
+          }
+        } else {
+          # Job timed out
+          Write-Warning "⏰ TIMEOUT: Script execution exceeded 30 seconds"
+          
+          # Try to get partial output
+          $partialOutput = Receive-Job $job
+          if ($partialOutput) {
+            Write-Host "📋 PARTIAL RESULTS:" -ForegroundColor Yellow
+            Write-Host $partialOutput
+          }
+          
+          Stop-Job $job
+          Remove-Job $job
+          Write-Host ""
+          Write-Host "❌ MAINTENANCE TIMED OUT" -ForegroundColor Red
+          Write-Host "Consider running fewer servers at once or increasing retention days." -ForegroundColor Yellow
+        }
+        
+      } catch {
+        Write-Error "❌ Error executing maintenance script: $($_.Exception.Message)"
+        Write-Host "Stack trace: $($_.ScriptStackTrace)" -ForegroundColor Red
+      }
+      
+      Write-Host ""
+      Write-Host "=== END OF PIPELINE ===" -ForegroundColor Cyan
+    displayName: 'Execute All Server Maintenance Operations'
+    continueOnError: true
+

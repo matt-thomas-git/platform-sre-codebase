@@ -1,0 +1,170 @@
+// Certificate Expiry Monitoring - Windows Event Logs & Custom Logs
+// Monitors SSL/TLS certificate expiration across web servers and applications
+// Use Case: Prevent service outages due to expired certificates
+
+// Query 1: Certificates Expiring Soon (Custom Log Table)
+// Assumes custom certificate monitoring script logs to a custom table
+CertificateInventory_CL
+| where TimeGenerated > ago(1d)
+| extend DaysUntilExpiry = datetime_diff('day', todatetime(ExpiryDate_s), now())
+| where DaysUntilExpiry <= 30  // Certificates expiring within 30 days
+| extend Status = case(
+    DaysUntilExpiry <= 7, "Critical",
+    DaysUntilExpiry <= 14, "Warning",
+    "Info"
+)
+| project TimeGenerated, 
+          Computer=Computer, 
+          CertificateName=FriendlyName_s,
+          Subject=Subject_s,
+          Thumbprint=Thumbprint_s,
+          ExpiryDate=todatetime(ExpiryDate_s),
+          DaysUntilExpiry,
+          Status,
+          Location=StoreLocation_s
+| order by DaysUntilExpiry asc
+
+// Query 2: Expired Certificates
+CertificateInventory_CL
+| where TimeGenerated > ago(1d)
+| extend DaysUntilExpiry = datetime_diff('day', todatetime(ExpiryDate_s), now())
+| where DaysUntilExpiry < 0  // Already expired
+| extend DaysExpired = abs(DaysUntilExpiry)
+| project TimeGenerated,
+          Computer,
+          CertificateName=FriendlyName_s,
+          Subject=Subject_s,
+          Thumbprint=Thumbprint_s,
+          ExpiryDate=todatetime(ExpiryDate_s),
+          DaysExpired,
+          Status="Expired",
+          Location=StoreLocation_s
+| order by DaysExpired desc
+
+// Query 3: Certificate Expiry Summary by Server
+CertificateInventory_CL
+| where TimeGenerated > ago(1d)
+| extend DaysUntilExpiry = datetime_diff('day', todatetime(ExpiryDate_s), now())
+| extend Status = case(
+    DaysUntilExpiry < 0, "Expired",
+    DaysUntilExpiry <= 7, "Critical",
+    DaysUntilExpiry <= 14, "Warning",
+    DaysUntilExpiry <= 30, "Info",
+    "Healthy"
+)
+| summarize 
+    TotalCerts = count(),
+    Expired = countif(Status == "Expired"),
+    Critical = countif(Status == "Critical"),
+    Warning = countif(Status == "Warning"),
+    Info = countif(Status == "Info"),
+    Healthy = countif(Status == "Healthy")
+    by Computer
+| order by Expired desc, Critical desc, Warning desc
+
+// Query 4: Certificates by Issuer
+CertificateInventory_CL
+| where TimeGenerated > ago(1d)
+| extend DaysUntilExpiry = datetime_diff('day', todatetime(ExpiryDate_s), now())
+| summarize 
+    CertCount = count(),
+    ExpiringSoon = countif(DaysUntilExpiry <= 30),
+    Expired = countif(DaysUntilExpiry < 0),
+    Servers = dcount(Computer)
+    by Issuer=Issuer_s
+| order by ExpiringSoon desc, Expired desc
+
+// Query 5: Self-Signed Certificates (Security Risk)
+CertificateInventory_CL
+| where TimeGenerated > ago(1d)
+| where Issuer_s == Subject_s  // Self-signed certificates
+| extend DaysUntilExpiry = datetime_diff('day', todatetime(ExpiryDate_s), now())
+| extend Status = case(
+    DaysUntilExpiry < 0, "Expired",
+    DaysUntilExpiry <= 30, "Expiring Soon",
+    "Active"
+)
+| project TimeGenerated,
+          Computer,
+          CertificateName=FriendlyName_s,
+          Subject=Subject_s,
+          Thumbprint=Thumbprint_s,
+          ExpiryDate=todatetime(ExpiryDate_s),
+          DaysUntilExpiry,
+          Status,
+          SecurityRisk="Self-Signed"
+| order by DaysUntilExpiry asc
+
+// Query 6: Certificate Renewal Tracking
+// Tracks when certificates were renewed (new thumbprint for same subject)
+CertificateInventory_CL
+| where TimeGenerated > ago(30d)
+| extend Subject = Subject_s
+| summarize 
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    Thumbprints = make_set(Thumbprint_s),
+    ThumbprintCount = dcount(Thumbprint_s)
+    by Computer, Subject
+| where ThumbprintCount > 1  // Certificate was renewed
+| extend DaysSinceRenewal = datetime_diff('day', now(), LastSeen)
+| project Computer, Subject, FirstSeen, LastSeen, DaysSinceRenewal, ThumbprintCount
+| order by LastSeen desc
+
+// Query 7: Certificates Expiring by Month (Capacity Planning)
+CertificateInventory_CL
+| where TimeGenerated > ago(1d)
+| extend ExpiryDate = todatetime(ExpiryDate_s)
+| extend ExpiryMonth = startofmonth(ExpiryDate)
+| where ExpiryDate > now()
+| where ExpiryDate < datetime_add('month', 12, now())  // Next 12 months
+| summarize CertCount = count() by ExpiryMonth
+| order by ExpiryMonth asc
+
+// Query 8: Wildcard Certificates Inventory
+CertificateInventory_CL
+| where TimeGenerated > ago(1d)
+| where Subject_s contains "*."  // Wildcard certificates
+| extend DaysUntilExpiry = datetime_diff('day', todatetime(ExpiryDate_s), now())
+| extend Status = case(
+    DaysUntilExpiry < 0, "Expired",
+    DaysUntilExpiry <= 30, "Expiring Soon",
+    "Active"
+)
+| project TimeGenerated,
+          Computer,
+          Subject=Subject_s,
+          Thumbprint=Thumbprint_s,
+          Issuer=Issuer_s,
+          ExpiryDate=todatetime(ExpiryDate_s),
+          DaysUntilExpiry,
+          Status,
+          CertType="Wildcard"
+| order by DaysUntilExpiry asc
+
+// Query 9: Certificate Monitoring Gaps (Servers Not Reporting)
+let ReportingServers = CertificateInventory_CL
+| where TimeGenerated > ago(24h)
+| distinct Computer;
+let AllServers = Heartbeat
+| where TimeGenerated > ago(24h)
+| where OSType == "Windows"
+| distinct Computer;
+AllServers
+| join kind=leftanti ReportingServers on Computer
+| project Computer, Status="Not Reporting Certificate Data", LastHeartbeat=now()
+| order by Computer asc
+
+// Query 10: Certificate Chain Issues (Event Log Based)
+Event
+| where TimeGenerated > ago(7d)
+| where Source == "Schannel"
+| where EventID in (36870, 36882, 36887)  // Certificate chain errors
+| extend CertError = case(
+    EventID == 36870, "Certificate Chain Invalid",
+    EventID == 36882, "Certificate Expired",
+    EventID == 36887, "Certificate Revoked",
+    "Unknown"
+)
+| project TimeGenerated, Computer, EventID, CertError, Message=RenderedDescription
+| order by TimeGenerated desc

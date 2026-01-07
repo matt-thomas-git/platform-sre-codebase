@@ -1,0 +1,20 @@
+{
+  "endpoints": [
+    {
+      "url": "https://www.example.com",
+      "expected_status": 200
+    },
+    {
+      "url": "https://api.example.com/health",
+      "expected_status": 200
+    },
+    {
+      "url": "https://app.example.com/status",
+      "expected_status": 200
+    },
+    {
+      "url": "https://internal-app.company.local/api/health",
+      "expected_status": 200
+    }
+  ]
+}

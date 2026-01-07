@@ -1,0 +1,113 @@
+// SQL Server Agent Job Monitoring - Windows Event Logs
+// Monitors SQL Server Agent job failures and performance issues
+// Use Case: Proactive monitoring of SQL Server scheduled jobs and ETL processes
+
+// Query 1: SQL Agent Job Failures (Last 24 Hours)
+Event
+| where TimeGenerated > ago(24h)
+| where Source == "SQLSERVERAGENT"
+| where EventLevelName == "Error"
+| where EventID in (208, 272, 273)  // Job failed event IDs
+| extend JobName = extract(@"Job '([^']+)'", 1, RenderedDescription)
+| extend StepName = extract(@"Step '([^']+)'", 1, RenderedDescription)
+| project TimeGenerated, Computer, JobName, StepName, EventID, Message=RenderedDescription
+| order by TimeGenerated desc
+
+// Query 2: Failed Jobs Summary (Last 7 Days)
+Event
+| where TimeGenerated > ago(7d)
+| where Source == "SQLSERVERAGENT"
+| where EventLevelName == "Error"
+| where EventID in (208, 272, 273)
+| extend JobName = extract(@"Job '([^']+)'", 1, RenderedDescription)
+| summarize 
+    FailureCount = count(),
+    LastFailure = max(TimeGenerated),
+    AffectedServers = dcount(Computer)
+    by JobName
+| order by FailureCount desc
+
+// Query 3: Long Running SQL Agent Jobs
+Event
+| where TimeGenerated > ago(24h)
+| where Source == "SQLSERVERAGENT"
+| where EventID == 208  // Job completed
+| extend JobName = extract(@"Job '([^']+)'", 1, RenderedDescription)
+| extend Duration = extract(@"Duration: (\d+:\d+:\d+)", 1, RenderedDescription)
+| where isnotempty(Duration)
+| extend DurationSeconds = datetime_diff('second', todatetime(Duration), todatetime('00:00:00'))
+| where DurationSeconds > 3600  // Jobs running longer than 1 hour
+| project TimeGenerated, Computer, JobName, Duration, DurationSeconds
+| order by DurationSeconds desc
+
+// Query 4: Jobs Failing on Specific Step
+Event
+| where TimeGenerated > ago(7d)
+| where Source == "SQLSERVERAGENT"
+| where EventLevelName == "Error"
+| where EventID == 272  // Job step failed
+| extend JobName = extract(@"Job '([^']+)'", 1, RenderedDescription)
+| extend StepName = extract(@"Step '([^']+)'", 1, RenderedDescription)
+| extend StepID = extract(@"Step ID (\d+)", 1, RenderedDescription)
+| summarize FailureCount = count(), LastFailure = max(TimeGenerated) by Computer, JobName, StepName, StepID
+| order by FailureCount desc
+
+// Query 5: SQL Agent Service Restarts
+Event
+| where TimeGenerated > ago(30d)
+| where Source == "SQLSERVERAGENT"
+| where EventID in (100, 103)  // Service started/stopped
+| extend ServiceAction = case(
+    EventID == 100, "Started",
+    EventID == 103, "Stopped",
+    "Unknown"
+)
+| project TimeGenerated, Computer, ServiceAction, Message=RenderedDescription
+| order by TimeGenerated desc
+
+// Query 6: Jobs by Success/Failure Rate
+let SuccessfulJobs = Event
+| where TimeGenerated > ago(7d)
+| where Source == "SQLSERVERAGENT"
+| where EventID == 208  // Job succeeded
+| extend JobName = extract(@"Job '([^']+)'", 1, RenderedDescription)
+| summarize SuccessCount = count() by JobName, Computer;
+let FailedJobs = Event
+| where TimeGenerated > ago(7d)
+| where Source == "SQLSERVERAGENT"
+| where EventID in (272, 273)  // Job failed
+| extend JobName = extract(@"Job '([^']+)'", 1, RenderedDescription)
+| summarize FailureCount = count() by JobName, Computer;
+SuccessfulJobs
+| join kind=fullouter FailedJobs on JobName, Computer
+| extend SuccessCount = coalesce(SuccessCount, 0)
+| extend FailureCount = coalesce(FailureCount, 0)
+| extend TotalRuns = SuccessCount + FailureCount
+| extend SuccessRate = round((SuccessCount * 100.0) / TotalRuns, 2)
+| project Computer=coalesce(Computer, Computer1), 
+          JobName=coalesce(JobName, JobName1), 
+          SuccessCount, FailureCount, TotalRuns, SuccessRate
+| order by SuccessRate asc, FailureCount desc
+
+// Query 7: Jobs Not Running (Expected Daily Jobs)
+// This query identifies jobs that should run daily but haven't run recently
+Event
+| where TimeGenerated > ago(7d)
+| where Source == "SQLSERVERAGENT"
+| where EventID == 208  // Job succeeded
+| extend JobName = extract(@"Job '([^']+)'", 1, RenderedDescription)
+| summarize LastRun = max(TimeGenerated) by Computer, JobName
+| extend HoursSinceLastRun = datetime_diff('hour', now(), LastRun)
+| where HoursSinceLastRun > 24  // Jobs that haven't run in 24+ hours
+| project Computer, JobName, LastRun, HoursSinceLastRun, Status="Overdue"
+| order by HoursSinceLastRun desc
+
+// Query 8: SQL Agent Alerts Triggered
+Event
+| where TimeGenerated > ago(24h)
+| where Source == "SQLSERVERAGENT"
+| where EventID == 398  // Alert triggered
+| extend AlertName = extract(@"Alert '([^']+)'", 1, RenderedDescription)
+| extend Severity = extract(@"Severity: (\d+)", 1, RenderedDescription)
+| project TimeGenerated, Computer, AlertName, Severity, Message=RenderedDescription
+| order by TimeGenerated desc

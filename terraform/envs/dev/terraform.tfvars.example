@@ -1,0 +1,52 @@
+# Example Terraform Variables for DEV Environment
+# Copy this file to terraform.tfvars and update with your actual values
+
+# Azure Configuration
+subscription_id = "00000000-0000-0000-0000-000000000000"
+location        = "North Europe"
+
+# Resource Group
+resource_group_name = "rg-sql-dev"
+
+# Virtual Network Configuration
+vnet_resource_group_name = "rg-network-shared"
+vnet_name                = "vnet-shared-northeurope"
+subnet_name              = "snet-database-dev"
+
+# Virtual Machine Configuration
+vm_name            = "vm-sql-dev-01"
+vm_size            = "Standard_E4ds_v5"
+nic_name           = "nic-sql-dev-01"
+public_ip_name     = "pip-sql-dev-01"
+domain_name_label  = "sql-dev-01"
+private_ip_address = "10.100.6.25"
+
+# SQL Server Configuration
+sql_publisher    = "MicrosoftSQLServer"
+sql_offer        = "SQL2019-WS2019"
+sql_sku          = "Standard"
+sql_version      = "latest"
+sql_license_type = "AHUB"  # Azure Hybrid Benefit
+
+# Admin Credentials (Use Azure Key Vault in production!)
+admin_username = "azureuser"
+admin_password = "CHANGE-ME-SuperSecureP@ssw0rd!"
+
+# Network Security - SQL Allowed Sources
+sql_allowed_sources = [
+  "10.0.0.0/8",      # Internal corporate network
+  "172.16.0.0/12",   # Internal network range
+  "192.168.0.0/16"   # Internal network range
+]
+
+# Network Security - Azure DevOps
+azuredevops_sources = [
+  "52.164.184.0/22"  # Azure DevOps service tag
+]
+
+# Network Security - Monitoring Systems
+monitoring_sources = [
+  "10.252.28.48/28",   # Monitoring subnet 1
+  "10.252.28.64/28",   # Monitoring subnet 2
+  "10.252.28.80/28"    # Monitoring subnet 3
+]

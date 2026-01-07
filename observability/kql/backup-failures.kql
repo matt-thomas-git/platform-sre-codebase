@@ -1,0 +1,102 @@
+// Azure Backup Monitoring - Recovery Services Vault
+// Monitors backup job status and identifies failures across Azure VMs and SQL databases
+// Use Case: Ensure backup SLAs are met and quickly identify backup failures
+
+// Query 1: Recent Backup Failures (Last 24 Hours)
+AzureDiagnostics
+| where Category == "AzureBackupReport"
+| where OperationName == "Job" and JobOperation_s == "Backup"
+| where JobStatus_s == "Failed"
+| where TimeGenerated > ago(24h)
+| project TimeGenerated, 
+          BackupItemName=BackupItemUniqueId_s,
+          JobStatus=JobStatus_s,
+          ErrorCode=JobFailureCode_s,
+          ErrorMessage=JobFailureMessage_s,
+          Duration=JobDurationInSecs_s,
+          VaultName=Resource
+| order by TimeGenerated desc
+
+// Query 2: Backup Success Rate by Resource (Last 7 Days)
+AzureDiagnostics
+| where Category == "AzureBackupReport"
+| where OperationName == "Job" and JobOperation_s == "Backup"
+| where TimeGenerated > ago(7d)
+| summarize 
+    TotalJobs = count(),
+    SuccessfulJobs = countif(JobStatus_s == "Completed"),
+    FailedJobs = countif(JobStatus_s == "Failed"),
+    CancelledJobs = countif(JobStatus_s == "Cancelled")
+    by BackupItemName=BackupItemUniqueId_s, VaultName=Resource
+| extend SuccessRate = round((SuccessfulJobs * 100.0) / TotalJobs, 2)
+| project BackupItemName, VaultName, TotalJobs, SuccessfulJobs, FailedJobs, SuccessRate
+| order by SuccessRate asc, FailedJobs desc
+
+// Query 3: Backup Jobs Taking Longer Than Expected
+AzureDiagnostics
+| where Category == "AzureBackupReport"
+| where OperationName == "Job" and JobOperation_s == "Backup"
+| where TimeGenerated > ago(24h)
+| extend DurationMinutes = todouble(JobDurationInSecs_s) / 60
+| where DurationMinutes > 60  // Backups taking more than 1 hour
+| project TimeGenerated,
+          BackupItemName=BackupItemUniqueId_s,
+          JobStatus=JobStatus_s,
+          DurationMinutes=round(DurationMinutes, 2),
+          DataTransferredMB=round(todouble(DataTransferredInMB_s), 2),
+          VaultName=Resource
+| order by DurationMinutes desc
+
+// Query 4: Missing Backups (No backup in last 24 hours)
+let ExpectedBackups = AzureDiagnostics
+| where Category == "AzureBackupReport"
+| where OperationName == "BackupItem"
+| where TimeGenerated > ago(7d)
+| distinct BackupItemUniqueId_s, Resource;
+let RecentBackups = AzureDiagnostics
+| where Category == "AzureBackupReport"
+| where OperationName == "Job" and JobOperation_s == "Backup"
+| where TimeGenerated > ago(24h)
+| where JobStatus_s == "Completed"
+| distinct BackupItemUniqueId_s, Resource;
+ExpectedBackups
+| join kind=leftanti RecentBackups on BackupItemUniqueId_s, Resource
+| project BackupItemName=BackupItemUniqueId_s, VaultName=Resource, Status="No Recent Backup"
+| order by BackupItemName asc
+
+// Query 5: Backup Storage Consumption Trend
+AzureDiagnostics
+| where Category == "AzureBackupReport"
+| where OperationName == "BackupItem"
+| where TimeGenerated > ago(30d)
+| extend StorageConsumedGB = todouble(StorageConsumedInMBs_s) / 1024
+| summarize AvgStorageGB = avg(StorageConsumedGB) by bin(TimeGenerated, 1d), BackupItemName=BackupItemUniqueId_s
+| project TimeGenerated, BackupItemName, StorageConsumedGB=round(AvgStorageGB, 2)
+| order by TimeGenerated desc, BackupItemName asc
+
+// Query 6: Backup Failures by Error Code
+AzureDiagnostics
+| where Category == "AzureBackupReport"
+| where OperationName == "Job" and JobOperation_s == "Backup"
+| where JobStatus_s == "Failed"
+| where TimeGenerated > ago(7d)
+| summarize FailureCount = count(), 
+            LastOccurrence = max(TimeGenerated),
+            AffectedResources = dcount(BackupItemUniqueId_s)
+    by ErrorCode=JobFailureCode_s, ErrorMessage=JobFailureMessage_s
+| order by FailureCount desc
+
+// Query 7: Backup SLA Compliance (Daily Backup Required)
+AzureDiagnostics
+| where Category == "AzureBackupReport"
+| where OperationName == "Job" and JobOperation_s == "Backup"
+| where TimeGenerated > ago(7d)
+| summarize LastSuccessfulBackup = max(TimeGenerated) by BackupItemName=BackupItemUniqueId_s
+| extend DaysSinceLastBackup = datetime_diff('day', now(), LastSuccessfulBackup)
+| extend SLAStatus = case(
+    DaysSinceLastBackup == 0, "Compliant",
+    DaysSinceLastBackup == 1, "Warning",
+    "Non-Compliant"
+)
+| project BackupItemName, LastSuccessfulBackup, DaysSinceLastBackup, SLAStatus
+| order by DaysSinceLastBackup desc

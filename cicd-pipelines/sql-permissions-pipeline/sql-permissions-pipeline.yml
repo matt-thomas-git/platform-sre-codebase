@@ -1,0 +1,495 @@
+﻿# SQL Permissions Management Pipeline
+name: 'SQL Permissions Pipeline'
+
+trigger: none  # Manual trigger only for safety
+
+parameters:
+- name: principalType
+  displayName: 'Principal Type'
+  type: string
+  default: 'AD Group'
+  values:
+  - 'AD Group'
+  - 'AD User'
+  - 'SQL Account'
+
+- name: principalName
+  displayName: 'Principal Name (e.g., MyGroup, john.doe, or sql_app_user)'
+  type: string
+  default: ''
+
+- name: sqlPassword
+  displayName: 'SQL Account Password (leave empty for AD Group/User, required for SQL Account only)'
+  type: string
+  default: 'N/A'
+
+- name: serverType
+  displayName: 'Server Type'
+  type: string
+  default: 'OnPrem'
+  values:
+  - 'OnPrem'
+
+- name: groupCategory
+  displayName: 'Group Category (for AD groups only - ignored for users)'
+  type: string
+  default: 'Normal'
+  values:
+  - 'Normal'
+  - 'Sysadmin'
+
+- name: groupDescription
+  displayName: 'Group Description'
+  type: string
+  default: 'SQL permissions group'
+
+- name: targetServers
+  displayName: 'Target SQL Server(s) - comma separated'
+  type: string
+  default: ''
+
+- name: permSysadmin
+  displayName: 'sysadmin (full server admin)'
+  type: boolean
+  default: false
+
+- name: permDbOwner
+  displayName: 'db_owner (database owner)'
+  type: boolean
+  default: false
+
+- name: permDbDatareader
+  displayName: 'db_datareader (read-only)'
+  type: boolean
+  default: false
+
+- name: permDbDatawriter
+  displayName: 'db_datawriter (write access)'
+  type: boolean
+  default: false
+
+- name: targetDatabases
+  displayName: 'Target Databases (comma separated or "all")'
+  type: string
+  default: 'all'
+
+- name: dryRun
+  displayName: 'Dry Run (Validate Only)'
+  type: boolean
+  default: true
+
+pool: 'Windows Updates'
+
+jobs:
+- job: SQLPermissionsJob
+  displayName: 'Execute SQL Permissions Management'
+  pool: 'Windows Updates'
+  
+  steps:
+  - powershell: |
+      Write-Host "=== SQL PERMISSIONS MANAGEMENT PIPELINE ===" -ForegroundColor Cyan
+      Write-Host "Pipeline: $(Build.DefinitionName)"
+      Write-Host "Build: $(Build.BuildNumber)"
+      Write-Host "Triggered By: $(Build.RequestedFor)"
+      Write-Host "Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+      Write-Host ""
+      
+      Write-Host "=== VALIDATING PARAMETERS ===" -ForegroundColor Yellow
+      
+      # Build permissions array from checkboxes FIRST
+      $permissions = @()
+      if ([System.Convert]::ToBoolean('${{ parameters.permSysadmin }}')) { $permissions += 'sysadmin' }
+      if ([System.Convert]::ToBoolean('${{ parameters.permDbOwner }}')) { $permissions += 'db_owner' }
+      if ([System.Convert]::ToBoolean('${{ parameters.permDbDatareader }}')) { $permissions += 'db_datareader' }
+      if ([System.Convert]::ToBoolean('${{ parameters.permDbDatawriter }}')) { $permissions += 'db_datawriter' }
+      
+      # Check permissions FIRST - most common mistake
+      if ($permissions.Count -eq 0) {
+        Write-Host ""
+        Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Red
+        Write-Host "║  VALIDATION FAILED: NO PERMISSIONS SELECTED               ║" -ForegroundColor Red
+        Write-Host "╠════════════════════════════════════════════════════════════╣" -ForegroundColor Red
+        Write-Host "║                                                            ║" -ForegroundColor Red
+        Write-Host "║  You must select at least ONE permission checkbox:        ║" -ForegroundColor Red
+        Write-Host "║                                                            ║" -ForegroundColor Red
+        Write-Host "║  ☐ sysadmin (full server admin)                           ║" -ForegroundColor Red
+        Write-Host "║  ☐ db_owner (database owner)                              ║" -ForegroundColor Red
+        Write-Host "║  ☐ db_datareader (read-only)                              ║" -ForegroundColor Red
+        Write-Host "║  ☐ db_datawriter (write access)                           ║" -ForegroundColor Red
+        Write-Host "║                                                            ║" -ForegroundColor Red
+        Write-Host "║  Please re-run the pipeline with at least one selected.   ║" -ForegroundColor Red
+        Write-Host "║                                                            ║" -ForegroundColor Red
+        Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Red
+        Write-Host ""
+        Write-Error "VALIDATION FAILED: At least one permission must be selected"
+        exit 1
+      }
+      
+      # Validate other required parameters
+      if ([string]::IsNullOrWhiteSpace("${{ parameters.principalName }}")) {
+        Write-Host ""
+        Write-Host "ERROR: Principal Name (Group/User) is required" -ForegroundColor Red
+        Write-Host ""
+        Write-Error "Principal Name is required"
+        exit 1
+      }
+      
+      if ([string]::IsNullOrWhiteSpace("${{ parameters.targetServers }}")) {
+        Write-Host ""
+        Write-Host "ERROR: Target Server(s) is required" -ForegroundColor Red
+        Write-Host ""
+        Write-Error "Target Server(s) is required"
+        exit 1
+      }
+      
+      Write-Host "✓ All validations passed" -ForegroundColor Green
+      Write-Host ""
+      
+      $principalType = "${{ parameters.principalType }}"
+      $isADGroup = $principalType -eq "AD Group"
+      $isADUser = $principalType -eq "AD User"
+      $isSQLAccount = $principalType -eq "SQL Account"
+      
+      # Validate SQL Account password if needed
+      $sqlPasswordValue = "${{ parameters.sqlPassword }}"
+      if ($isSQLAccount -and ([string]::IsNullOrWhiteSpace($sqlPasswordValue) -or $sqlPasswordValue -eq 'N/A')) {
+        Write-Host ""
+        Write-Host "ERROR: SQL Account Password is required when creating a SQL Account" -ForegroundColor Red
+        Write-Host "       Please provide a valid password (not 'N/A' or empty)" -ForegroundColor Red
+        Write-Host ""
+        Write-Error "SQL Account Password is required"
+        exit 1
+      }
+      
+      # Determine OU path based on group category (only for AD groups)
+      $groupOU = if ($isADGroup -and "${{ parameters.groupCategory }}" -eq "Sysadmin") {
+        "OU=Servers_Sysadmin,OU=Groups,OU=domain.com,DC=domain,DC=local"
+      } else {
+        "OU=Groups,OU=domain.com,DC=domain,DC=local"
+      }
+      
+      Write-Host "CONFIGURATION" -ForegroundColor Yellow
+      Write-Host "Principal Type: $principalType"
+      Write-Host "Principal Name: ${{ parameters.principalName }}"
+      if ($isADGroup) {
+        Write-Host "Group Category: ${{ parameters.groupCategory }}"
+        Write-Host "Group OU: $groupOU"
+        Write-Host "Description: ${{ parameters.groupDescription }}"
+      }
+      if ($isSQLAccount) {
+        Write-Host "SQL Password: ********" -ForegroundColor Gray
+      }
+      Write-Host "Target Servers: ${{ parameters.targetServers }}"
+      Write-Host "Server Type: ${{ parameters.serverType }}"
+      Write-Host "Permissions: $($permissions -join ', ')"
+      Write-Host "Target Databases: ${{ parameters.targetDatabases }}"
+      Write-Host "Dry Run: ${{ parameters.dryRun }}"
+      Write-Host ""
+      
+      # Parse inputs
+      $servers = "${{ parameters.targetServers }}" -split ',' | ForEach-Object { $_.Trim() }
+      $databases = "${{ parameters.targetDatabases }}" -split ',' | ForEach-Object { $_.Trim() }
+      
+      $dryRun = [System.Convert]::ToBoolean('${{ parameters.dryRun }}')
+      
+      if ($dryRun) {
+        Write-Host "DRY RUN MODE - No changes will be made" -ForegroundColor Yellow
+      } else {
+        Write-Host "LIVE MODE - Changes will be applied" -ForegroundColor Red
+      }
+      
+      Write-Host ""
+      Write-Host "STARTING SQL PERMISSIONS OPERATIONS..." -ForegroundColor Green
+      Write-Host ""
+      
+      $totalSuccess = 0
+      $totalFailed = 0
+      
+      try {
+        # Step 1: Create AD Group, verify AD User exists, or prepare SQL Account
+        if ($isADGroup) {
+          Write-Host "=== CREATING AD GROUP ===" -ForegroundColor Cyan
+            
+            if ($dryRun) {
+              Write-Host "[DRY RUN] Would create AD group: ${{ parameters.principalName }}" -ForegroundColor Cyan
+              Write-Host "  OU: $groupOU" -ForegroundColor Gray
+              $totalSuccess++
+            } else {
+              Import-Module ActiveDirectory -ErrorAction Stop
+              
+              $existingGroup = Get-ADGroup -Filter "Name -eq '${{ parameters.principalName }}'" -ErrorAction SilentlyContinue
+              
+              if ($existingGroup) {
+                Write-Host "AD Group already exists" -ForegroundColor Green
+                
+                # Even if group exists, force repadmin to ensure it's replicated
+                Write-Host "Forcing AD replication to ensure group is available on all DCs..." -ForegroundColor Yellow
+                try {
+                  # Get a domain controller to run repadmin on
+                  $dc = (Get-ADDomainController -Discover -Service PrimaryDC).HostName
+                  Write-Host "  Running repadmin on DC: $dc" -ForegroundColor Gray
+                  
+                  $repadminOutput = Invoke-Command -ComputerName $dc -ScriptBlock {
+                    & repadmin /syncall /AdeP 2>&1
+                  } -ErrorAction Stop
+                  
+                  Write-Host "  Repadmin output:" -ForegroundColor Gray
+                  $repadminOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
+                  Write-Host "  AD replication command executed successfully" -ForegroundColor Green
+                  Write-Host "  Waiting 10 seconds for replication to propagate..." -ForegroundColor Yellow
+                  Start-Sleep -Seconds 10
+                } catch {
+                  Write-Warning "Could not force AD replication: $($_.Exception.Message)"
+                  Write-Host "  Continuing anyway - will rely on retry logic..." -ForegroundColor Yellow
+                  Start-Sleep -Seconds 5
+                }
+                
+                $totalSuccess++
+              } else {
+                New-ADGroup -Name "${{ parameters.principalName }}" -GroupScope Global -GroupCategory Security -Path $groupOU -Description "${{ parameters.groupDescription }}" -ErrorAction Stop
+                Write-Host "AD Group created successfully" -ForegroundColor Green
+                
+                # Force AD replication
+                Write-Host "Forcing AD replication across domain controllers..." -ForegroundColor Yellow
+                try {
+                  # Get a domain controller to run repadmin on
+                  $dc = (Get-ADDomainController -Discover -Service PrimaryDC).HostName
+                  Write-Host "  Running repadmin on DC: $dc" -ForegroundColor Gray
+                  
+                  $repadminOutput = Invoke-Command -ComputerName $dc -ScriptBlock {
+                    & repadmin /syncall /AdeP 2>&1
+                  } -ErrorAction Stop
+                  
+                  Write-Host "  Repadmin output:" -ForegroundColor Gray
+                  $repadminOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
+                  Write-Host "  AD replication command executed successfully" -ForegroundColor Green
+                  Write-Host "  Waiting 10 seconds for replication to propagate..." -ForegroundColor Yellow
+                  Start-Sleep -Seconds 10
+                } catch {
+                  Write-Warning "Could not force AD replication: $($_.Exception.Message)"
+                  Write-Host "  Continuing anyway - will rely on retry logic..." -ForegroundColor Yellow
+                  Start-Sleep -Seconds 5
+                }
+                
+                # Verify group replication to all target servers
+                Write-Host "Verifying AD group replication to target servers..." -ForegroundColor Yellow
+                $principalFullName = "DOMAIN\${{ parameters.principalName }}"
+                $maxAttempts = 12
+                $attemptDelay = 5
+                
+                $allServersReady = $false
+                $attempt = 0
+                
+                while (-not $allServersReady -and $attempt -lt $maxAttempts) {
+                  $attempt++
+                  Write-Host "  Verification attempt $attempt of $maxAttempts..." -ForegroundColor Gray
+                  
+                  $serversReady = @()
+                  foreach ($server in $servers) {
+                    try {
+                      $testConn = New-Object System.Data.SqlClient.SqlConnection
+                      $testConn.ConnectionString = "Server=$server;Integrated Security=True;TrustServerCertificate=True;Connection Timeout=5"
+                      $testConn.Open()
+                      
+                      $testCmd = $testConn.CreateCommand()
+                      $testCmd.CommandText = "SELECT SUSER_SID('$principalFullName')"
+                      $result = $testCmd.ExecuteScalar()
+                      $testConn.Close()
+                      
+                      if ($result -ne [DBNull]::Value -and $result -ne $null) {
+                        Write-Host "    ✓ $server - Group is available" -ForegroundColor Green
+                        $serversReady += $server
+                      } else {
+                        Write-Host "    ✗ $server - Group not yet available" -ForegroundColor Yellow
+                      }
+                    } catch {
+                      Write-Host "    ✗ $server - Group not yet available" -ForegroundColor Yellow
+                    }
+                  }
+                  
+                  if ($serversReady.Count -eq $servers.Count) {
+                    $allServersReady = $true
+                    Write-Host "  All servers can see the AD group!" -ForegroundColor Green
+                  } else {
+                    if ($attempt -lt $maxAttempts) {
+                      Write-Host "  Waiting $attemptDelay seconds before retry..." -ForegroundColor Gray
+                      Start-Sleep -Seconds $attemptDelay
+                    }
+                  }
+                }
+                
+                if (-not $allServersReady) {
+                  Write-Warning "Not all servers can see the AD group after $($maxAttempts * $attemptDelay) seconds. Proceeding anyway..."
+                }
+                
+                $totalSuccess++
+              }
+            }
+        } elseif ($isADUser) {
+          # AD User - just verify it exists
+          Write-Host "=== VERIFYING AD USER EXISTS ===" -ForegroundColor Cyan
+          
+          if ($dryRun) {
+            Write-Host "[DRY RUN] Would verify AD user: ${{ parameters.principalName }}" -ForegroundColor Cyan
+            $totalSuccess++
+          } else {
+            Import-Module ActiveDirectory -ErrorAction Stop
+            $existingUser = Get-ADUser -Filter "SamAccountName -eq '${{ parameters.principalName }}'" -ErrorAction SilentlyContinue
+            
+            if ($existingUser) {
+              Write-Host "AD User exists: $($existingUser.Name)" -ForegroundColor Green
+              $totalSuccess++
+            } else {
+              Write-Error "AD User '${{ parameters.principalName }}' not found. Please create the user first."
+              exit 1
+            }
+          }
+        } else {
+          # SQL Account - will be created on each SQL Server
+          Write-Host "=== SQL ACCOUNT MODE ===" -ForegroundColor Cyan
+          Write-Host "SQL Account will be created on each target SQL Server" -ForegroundColor Yellow
+          $totalSuccess++
+        }
+        
+        Write-Host ""
+        
+        # Step 2: Apply SQL Permissions
+        Write-Host "=== CONFIGURING SQL SERVERS ===" -ForegroundColor Cyan
+        
+        foreach ($server in $servers) {
+          Write-Host "`nProcessing Server: $server" -ForegroundColor Yellow
+          
+          # Set principal name based on type
+          $principalFullName = if ($isSQLAccount) {
+            "${{ parameters.principalName }}"
+          } else {
+            "DOMAIN\${{ parameters.principalName }}"
+          }
+            
+            if ($dryRun) {
+              Write-Host "[DRY RUN] Would create login for $principalType '$principalFullName' and assign roles: $($permissions -join ', ')" -ForegroundColor Cyan
+              $totalSuccess++
+            } else {
+              # Retry logic for SQL operations (in case AD replication is still in progress)
+              $maxRetries = 12
+              $retryDelay = 5
+              $retryAttempt = 0
+              $success = $false
+              
+              while (-not $success -and $retryAttempt -lt $maxRetries) {
+                $retryAttempt++
+                
+                if ($retryAttempt -gt 1) {
+                  Write-Host "  Retry attempt $retryAttempt of $maxRetries (waiting ${retryDelay}s)..." -ForegroundColor Yellow
+                  Start-Sleep -Seconds $retryDelay
+                }
+                
+                try {
+                  $sqlConn = New-Object System.Data.SqlClient.SqlConnection
+                  $sqlConn.ConnectionString = "Server=$server;Integrated Security=True;TrustServerCertificate=True"
+                  $sqlConn.Open()
+                  
+                  $sqlCmd = $sqlConn.CreateCommand()
+                  
+                  # Create login based on type
+                  if ($isSQLAccount) {
+                    # SQL Authentication login
+                    $sqlCmd.CommandText = "IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = '$principalFullName') CREATE LOGIN [$principalFullName] WITH PASSWORD = '${{ parameters.sqlPassword }}'"
+                    $sqlCmd.ExecuteNonQuery() | Out-Null
+                    Write-Host "  SQL login created/verified: $principalFullName" -ForegroundColor Green
+                  } else {
+                    # Windows Authentication login - check if resolvable first
+                    Write-Host "  Checking if SQL Server can resolve the principal..." -ForegroundColor Gray
+                    $sqlCmd.CommandText = "SELECT SUSER_SID('$principalFullName')"
+                    $sidResult = $sqlCmd.ExecuteScalar()
+                    
+                    if ($sidResult -eq [DBNull]::Value -or $sidResult -eq $null) {
+                      Write-Host "  SQL Server cannot resolve '$principalFullName' - attempting to flush Kerberos cache..." -ForegroundColor Yellow
+                      
+                      # Try to flush the Kerberos ticket cache on the SQL Server
+                      try {
+                        Invoke-Command -ComputerName $server -ScriptBlock { klist purge } -ErrorAction SilentlyContinue
+                        Write-Host "  Kerberos cache flushed on $server" -ForegroundColor Gray
+                        Start-Sleep -Seconds 2
+                      } catch {
+                        Write-Host "  Could not flush Kerberos cache: $($_.Exception.Message)" -ForegroundColor Gray
+                      }
+                      
+                      # Re-check after flush
+                      $sqlCmd.CommandText = "SELECT SUSER_SID('$principalFullName')"
+                      $sidResult = $sqlCmd.ExecuteScalar()
+                    }
+                    
+                    if ($sidResult -ne [DBNull]::Value -and $sidResult -ne $null) {
+                      Write-Host "  ✓ SQL Server can resolve the principal" -ForegroundColor Green
+                    } else {
+                      Write-Host "  ⚠ SQL Server still cannot resolve the principal - will attempt login creation anyway" -ForegroundColor Yellow
+                    }
+                    
+                    # Create Windows login
+                    $sqlCmd.CommandText = "IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = '$principalFullName') CREATE LOGIN [$principalFullName] FROM WINDOWS"
+                    $sqlCmd.ExecuteNonQuery() | Out-Null
+                    Write-Host "  Windows login created/verified for $principalType" -ForegroundColor Green
+                  }
+                
+                # Assign permissions
+                foreach ($role in $permissions) {
+                  if ($role -in @('sysadmin')) {
+                    $sqlCmd.CommandText = "ALTER SERVER ROLE $role ADD MEMBER [$principalFullName]"
+                    $sqlCmd.ExecuteNonQuery() | Out-Null
+                    Write-Host "  Assigned server role: $role" -ForegroundColor Green
+                  } else {
+                    # Database-level permissions
+                    $dbList = if ($databases -contains "all") {
+                      $sqlCmd.CommandText = "SELECT name FROM sys.databases WHERE name NOT IN ('master', 'tempdb', 'model', 'msdb')"
+                      $reader = $sqlCmd.ExecuteReader()
+                      $dbNames = @()
+                      while ($reader.Read()) { $dbNames += $reader["name"] }
+                      $reader.Close()
+                      $dbNames
+                    } else {
+                      $databases
+                    }
+                    
+                    foreach ($dbName in $dbList) {
+                      $sqlCmd.CommandText = "USE [$dbName]; IF NOT EXISTS (SELECT * FROM sys.database_principals WHERE name = '$principalFullName') CREATE USER [$principalFullName] FOR LOGIN [$principalFullName]; ALTER ROLE $role ADD MEMBER [$principalFullName];"
+                      $sqlCmd.ExecuteNonQuery() | Out-Null
+                      Write-Host "  Assigned $role in database: $dbName" -ForegroundColor Green
+                    }
+                  }
+                }
+                  
+                  $sqlConn.Close()
+                  $success = $true
+                  $totalSuccess++
+                  
+                } catch {
+                  if ($retryAttempt -ge $maxRetries) {
+                    Write-Host "  Failed after $maxRetries attempts: $($_.Exception.Message)" -ForegroundColor Red
+                    $totalFailed++
+                  } else {
+                    Write-Host "  Attempt $retryAttempt failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                  }
+                }
+              }
+            }
+          }
+        
+        Write-Host ""
+        Write-Host "=== SUMMARY ===" -ForegroundColor Cyan
+        Write-Host "Total Successful: $totalSuccess" -ForegroundColor Green
+        Write-Host "Total Failed: $totalFailed" -ForegroundColor $(if ($totalFailed -gt 0) { "Red" } else { "Green" })
+        
+        Write-Host "##vso[task.setvariable variable=SQLPermissions.TotalSuccess]$totalSuccess"
+        Write-Host "##vso[task.setvariable variable=SQLPermissions.TotalFailed]$totalFailed"
+        
+        if ($totalFailed -gt 0) {
+          exit 1
+        }
+        
+      } catch {
+        Write-Error "Pipeline failed: $($_.Exception.Message)"
+        exit 1
+      }
+    displayName: 'Execute SQL Permissions Management'
+    continueOnError: false

@@ -1,0 +1,148 @@
+# Windows Update Pipeline
+# Orchestrates Windows Updates across server estates with Dynatrace integration
+
+trigger: none
+
+schedules:
+- cron: "0 2 * * 2"  # Every Tuesday at 2 AM
+  displayName: Monthly Patch Tuesday
+  branches:
+    include:
+    - main
+  always: false
+
+parameters:
+- name: environment
+  displayName: Environment
+  type: string
+  default: 'Dev'
+  values:
+  - Dev
+  - UAT
+  - Production
+
+- name: updateCategories
+  displayName: Update Categories
+  type: string
+  default: 'CriticalUpdates,SecurityUpdates'
+
+- name: rebootIfRequired
+  displayName: Reboot if Required
+  type: boolean
+  default: true
+
+variables:
+  - name: dynatraceUrl
+    value: 'https://YOUR-TENANT.live.dynatrace.com'
+  - name: maintenanceWindowMinutes
+    value: 180
+
+stages:
+- stage: PreChecks
+  displayName: 'Pre-Update Checks'
+  jobs:
+  - job: ValidateServers
+    displayName: 'Validate Server Connectivity'
+    pool:
+      vmImage: 'windows-latest'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Load Server List'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $env = "${{ parameters.environment }}"
+          $serverList = & "$(Build.SourcesDirectory)\WindowsUpdates\Servers\${env}Servers.ps1"
+          Write-Host "Loaded $($serverList.Count) servers for $env environment"
+          $serverList | ForEach-Object { Write-Host "  - $_" }
+
+    - task: PowerShell@2
+      displayName: 'Run Pre-Steps'
+      inputs:
+        filePath: '$(Build.SourcesDirectory)\WindowsUpdates\PreSteps.ps1'
+        arguments: '-Environment ${{ parameters.environment }}'
+
+- stage: MaintenanceWindow
+  displayName: 'Create Dynatrace Maintenance Window'
+  dependsOn: PreChecks
+  jobs:
+  - job: CreateSDT
+    displayName: 'Create Scheduled Downtime'
+    pool:
+      vmImage: 'windows-latest'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Create Dynatrace Maintenance Window'
+      inputs:
+        filePath: '$(Build.SourcesDirectory)\WindowsUpdates\DynatraceSDT.ps1'
+        arguments: >
+          -Action Create
+          -Environment ${{ parameters.environment }}
+          -DurationMinutes $(maintenanceWindowMinutes)
+      env:
+        DYNATRACE_TOKEN: $(DynatraceApiToken)
+
+- stage: WindowsUpdates
+  displayName: 'Install Windows Updates'
+  dependsOn: MaintenanceWindow
+  jobs:
+  - job: InstallUpdates
+    displayName: 'Install Updates on Servers'
+    pool:
+      vmImage: 'windows-latest'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Install Windows Updates'
+      inputs:
+        filePath: '$(Build.SourcesDirectory)\WindowsUpdates\WinUpdateLibrary.ps1'
+        arguments: >
+          -Environment ${{ parameters.environment }}
+          -Categories ${{ parameters.updateCategories }}
+          -Reboot:$${{ parameters.rebootIfRequired }}
+      timeoutInMinutes: 120
+
+- stage: PostChecks
+  displayName: 'Post-Update Validation'
+  dependsOn: WindowsUpdates
+  jobs:
+  - job: ValidateUpdates
+    displayName: 'Validate Server Health'
+    pool:
+      vmImage: 'windows-latest'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Run Post-Steps'
+      inputs:
+        filePath: '$(Build.SourcesDirectory)\WindowsUpdates\PostSteps.ps1'
+        arguments: '-Environment ${{ parameters.environment }}'
+
+    - task: PowerShell@2
+      displayName: 'Close Dynatrace Maintenance Window'
+      inputs:
+        filePath: '$(Build.SourcesDirectory)\WindowsUpdates\DynatraceSDT.ps1'
+        arguments: >
+          -Action Close
+          -Environment ${{ parameters.environment }}
+      env:
+        DYNATRACE_TOKEN: $(DynatraceApiToken)
+      condition: always()
+
+- stage: Reporting
+  displayName: 'Generate Reports'
+  dependsOn: PostChecks
+  condition: always()
+  jobs:
+  - job: GenerateReport
+    displayName: 'Create Update Report'
+    pool:
+      vmImage: 'windows-latest'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Generate Update Summary'
+      inputs:
+        targetType: 'inline'
+        script: |
+          Write-Host "##[section]Windows Update Pipeline Complete"
+          Write-Host "Environment: ${{ parameters.environment }}"
+          Write-Host "Categories: ${{ parameters.updateCategories }}"
+          Write-Host "Reboot: ${{ parameters.rebootIfRequired }}"

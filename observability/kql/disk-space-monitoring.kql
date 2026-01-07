@@ -1,0 +1,78 @@
+// Disk Space Monitoring - Azure Monitor
+// Monitors disk space usage across Windows VMs and alerts on low disk space conditions
+// Use Case: Proactive capacity management and preventing disk full incidents
+
+// Query 1: Current Disk Space Status (Last 5 Minutes)
+Perf
+| where TimeGenerated > ago(5m)
+| where ObjectName == "LogicalDisk" and CounterName == "% Free Space"
+| where InstanceName !in ("_Total", "HarddiskVolume1")  // Exclude system volumes
+| summarize AvgFreeSpace = avg(CounterValue) by Computer, InstanceName
+| extend Status = case(
+    AvgFreeSpace < 10, "Critical",
+    AvgFreeSpace < 20, "Warning",
+    "Healthy"
+)
+| project Computer, Drive=InstanceName, FreeSpacePercent=round(AvgFreeSpace, 2), Status
+| order by FreeSpacePercent asc
+
+// Query 2: Disk Space Trend (Last 24 Hours)
+Perf
+| where TimeGenerated > ago(24h)
+| where ObjectName == "LogicalDisk" and CounterName == "% Free Space"
+| where InstanceName !in ("_Total", "HarddiskVolume1")
+| summarize AvgFreeSpace = avg(CounterValue) by Computer, InstanceName, bin(TimeGenerated, 1h)
+| project TimeGenerated, Computer, Drive=InstanceName, FreeSpacePercent=round(AvgFreeSpace, 2)
+| order by TimeGenerated desc, Computer asc
+
+// Query 3: Servers with Critical Disk Space (< 10% Free)
+Perf
+| where TimeGenerated > ago(15m)
+| where ObjectName == "LogicalDisk" and CounterName == "% Free Space"
+| where InstanceName !in ("_Total", "HarddiskVolume1")
+| summarize AvgFreeSpace = avg(CounterValue) by Computer, InstanceName
+| where AvgFreeSpace < 10
+| extend AlertLevel = "Critical"
+| project Computer, Drive=InstanceName, FreeSpacePercent=round(AvgFreeSpace, 2), AlertLevel
+| order by FreeSpacePercent asc
+
+// Query 4: Disk Space Growth Rate (Predict when disk will be full)
+Perf
+| where TimeGenerated > ago(7d)
+| where ObjectName == "LogicalDisk" and CounterName == "% Free Space"
+| where InstanceName !in ("_Total", "HarddiskVolume1")
+| summarize FreeSpace = avg(CounterValue) by Computer, InstanceName, bin(TimeGenerated, 1d)
+| order by Computer asc, InstanceName asc, TimeGenerated asc
+| serialize
+| extend PreviousFreeSpace = prev(FreeSpace, 1)
+| extend DailyChange = FreeSpace - PreviousFreeSpace
+| where isnotnull(DailyChange)
+| summarize AvgDailyChange = avg(DailyChange), CurrentFreeSpace = max(FreeSpace) by Computer, InstanceName
+| extend DaysUntilFull = case(
+    AvgDailyChange >= 0, 999,  // Disk space increasing or stable
+    CurrentFreeSpace / abs(AvgDailyChange)
+)
+| where DaysUntilFull < 30
+| project Computer, Drive=InstanceName, CurrentFreeSpace=round(CurrentFreeSpace, 2), 
+          DailyChangePercent=round(AvgDailyChange, 2), DaysUntilFull=round(DaysUntilFull, 0)
+| order by DaysUntilFull asc
+
+// Query 5: Disk Space by Environment Tag
+Perf
+| where TimeGenerated > ago(5m)
+| where ObjectName == "LogicalDisk" and CounterName == "% Free Space"
+| where InstanceName !in ("_Total", "HarddiskVolume1")
+| summarize AvgFreeSpace = avg(CounterValue) by Computer, InstanceName
+| extend Environment = case(
+    Computer startswith "PROD", "Production",
+    Computer startswith "UAT", "UAT",
+    Computer startswith "DEV", "Development",
+    "Unknown"
+)
+| extend Status = case(
+    AvgFreeSpace < 10, "Critical",
+    AvgFreeSpace < 20, "Warning",
+    "Healthy"
+)
+| summarize Servers = count(), AvgFreeSpace = avg(AvgFreeSpace) by Environment, Status
+| order by Environment asc, Status asc

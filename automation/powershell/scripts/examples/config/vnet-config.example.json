@@ -1,0 +1,39 @@
+{
+  "resourceGroup": "network-rg",
+  "vnetName": "prod-vnet-01",
+  "location": "eastus2",
+  "addressPrefix": "10.0.0.0/16",
+  "subnets": [
+    {
+      "name": "web-subnet",
+      "addressPrefix": "10.0.1.0/24",
+      "description": "Subnet for web tier"
+    },
+    {
+      "name": "app-subnet",
+      "addressPrefix": "10.0.2.0/24",
+      "description": "Subnet for application tier"
+    },
+    {
+      "name": "data-subnet",
+      "addressPrefix": "10.0.3.0/24",
+      "description": "Subnet for database tier"
+    },
+    {
+      "name": "management-subnet",
+      "addressPrefix": "10.0.10.0/24",
+      "description": "Subnet for management and jump boxes"
+    },
+    {
+      "name": "AzureBastionSubnet",
+      "addressPrefix": "10.0.20.0/26",
+      "description": "Azure Bastion subnet (must be named AzureBastionSubnet)"
+    }
+  ],
+  "tags": {
+    "Environment": "Production",
+    "ManagedBy": "Platform-Team",
+    "CostCenter": "IT-Infrastructure",
+    "Project": "Network-Modernization"
+  }
+}

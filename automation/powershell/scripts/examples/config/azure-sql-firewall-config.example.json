@@ -1,0 +1,25 @@
+{
+  "resourceGroup": "sql-resource-group",
+  "servers": {
+    "sqlserver1.database.windows.net": [],
+    "sqlserver2.database.windows.net": []
+  },
+  "ipRulesToAdd": [
+    {
+      "name": "Office-Location-1",
+      "ip": "203.0.113.10"
+    },
+    {
+      "name": "Office-Location-2",
+      "ip": "203.0.113.11"
+    },
+    {
+      "name": "VPN-Gateway",
+      "ip": "203.0.113.20"
+    }
+  ],
+  "ipRulesToRemove": [
+    "198.51.100.5",
+    "198.51.100.6"
+  ]
+}
