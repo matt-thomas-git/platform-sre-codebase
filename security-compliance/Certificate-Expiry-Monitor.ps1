@@ -1,5 +1,5 @@
 ﻿$deploymentBasePath = "C$\inetpub\wwwroot\"  # Base folder where ClickOnce package may be stored
-$targetServers = @("eescjuk", "eeabbottcldev", "eebayerukdev")  # List of servers to target dynamically
+$targetServers = @("")  # List of servers to target dynamically
 
 # Initialize results
 $results = @()
