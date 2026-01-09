@@ -68,7 +68,7 @@ These three components showcase the depth and breadth of this portfolio:
 - **Terraform Files:** 20 (.tf files across 5 modules + DEV environment)
 - **KQL Queries:** 4 Azure Monitor query files
 - **Documentation:** 37 markdown files (guides, runbooks, READMEs)
-- **YAML Pipelines:** 3 CI/CD pipeline definitions
+- **CI/CD Pipelines:** 3 Azure DevOps + 1 GitHub Actions (cross-platform examples)
 - **JSON Configs:** 4 configuration examples
 - **PowerShell Module:** 1 reusable module with 3 public functions
 - **Lines of Code:** ~8,000+ lines of production-tested PowerShell, Python, Terraform, and KQL
@@ -79,7 +79,7 @@ These three components showcase the depth and breadth of this portfolio:
 - **Cloud Platforms:** Azure (VMs, SQL Database, Resource Groups, Subscriptions, Recovery Services Vaults)
 - **Automation:** PowerShell (advanced scripting, modules, remoting), Python
 - **Infrastructure as Code:** Terraform (Azure SQL Server VMs, AHUB, multi-disk configurations)
-- **CI/CD:** Azure DevOps Pipelines (YAML, multi-stage)
+- **CI/CD:** Azure DevOps Pipelines + GitHub Actions (YAML, multi-stage, cross-platform)
 - **Observability:** Dynatrace (API automation, deployment, monitoring, Docker integration)
 - **Databases:** SQL Server (health checks, permissions, maintenance, backups)
 - **Operating Systems:** Windows Server (administration, auditing, patching)
@@ -137,8 +137,11 @@ platform-sre-portfolio/
 │       ├── endpoints-example.json
 │       └── config/
 │
-├── cicd-pipelines/               # Azure DevOps pipeline examples
-│   ├── README.md
+├── cicd-pipelines/               # CI/CD pipeline examples (Azure DevOps + GitHub Actions)
+│   ├── README.md                # Pipeline overview and comparison
+│   ├── github-actions/          # GitHub Actions workflow examples
+│   │   ├── README.md           # Azure DevOps vs GitHub Actions comparison
+│   │   └── windows-update-workflow.yml  # Converted Windows Update workflow
 │   ├── server-maint-pipeline/
 │   │   ├── README.md            # Server maintenance pipeline guide
 │   │   ├── Server-Maintenance-Pipeline.ps1
@@ -149,12 +152,12 @@ platform-sre-portfolio/
 │   │   └── sql-permissions-pipeline.yml
 │   └── windows-updates-pipeline/
 │       ├── README.md            # Windows patching pipeline guide
-│       ├── DynatraceSDT.ps1
-│       ├── PreSteps.ps1
-│       ├── PostSteps.ps1
-│       ├── WinUpdateLibrary.ps1
+│       ├── DynatraceSDT.ps1    # Shared by both Azure DevOps & GitHub Actions
+│       ├── PreSteps.ps1        # Shared by both Azure DevOps & GitHub Actions
+│       ├── PostSteps.ps1       # Shared by both Azure DevOps & GitHub Actions
+│       ├── WinUpdateLibrary.ps1  # Shared by both Azure DevOps & GitHub Actions
 │       ├── pipelines/
-│       │   └── windows-update-pipeline.yml
+│       │   └── windows-update-pipeline.yml  # Azure DevOps version
 │       └── servers/
 │           ├── DevServers.ps1
 │           ├── ProductionServers.ps1
